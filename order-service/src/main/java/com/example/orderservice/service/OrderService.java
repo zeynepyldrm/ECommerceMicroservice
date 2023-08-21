@@ -19,7 +19,7 @@ import java.util.UUID;
 public class OrderService {
     private final OrderRepository orderRepository;
     private  final WebClient.Builder webClientBuilder;
-    public void placeOrder(OrderRequest orderRequest){
+    public String placeOrder(OrderRequest orderRequest){
         Order order = new Order();
         order.setOrderNumber(UUID.randomUUID().toString());
         List<OrderLineItems> orderLineItems = orderRequest.getOrderLineItemsDtoList()
@@ -39,6 +39,7 @@ public class OrderService {
         boolean allPorductsInStock = Arrays.stream(inventoryResponses).allMatch(InventoryResponse::isInStock);
         if(allPorductsInStock){
             orderRepository.save(order);
+            return "Order Placed Successful";
         } else{
             throw new IllegalArgumentException("Product is not stock, please try again.");
         }
