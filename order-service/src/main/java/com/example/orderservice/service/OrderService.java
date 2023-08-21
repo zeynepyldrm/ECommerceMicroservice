@@ -6,6 +6,8 @@ import com.example.orderservice.dto.OrderRequest;
 import com.example.orderservice.model.Order;
 import com.example.orderservice.model.OrderLineItems;
 import com.example.orderservice.repository.OrderRepository;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -19,6 +21,7 @@ import java.util.UUID;
 public class OrderService {
     private final OrderRepository orderRepository;
     private  final WebClient.Builder webClientBuilder;
+    private final ObservationRegistry observationRegistry;
     public String placeOrder(OrderRequest orderRequest){
         Order order = new Order();
         order.setOrderNumber(UUID.randomUUID().toString());
@@ -30,19 +33,25 @@ public class OrderService {
                 .map(OrderLineItems::getSkuCode)
                 .toList();
 
-        InventoryResponse[] inventoryResponses = webClientBuilder.build().get()
-                .uri("http://inventory-service/api/inventory",
-                        uriBuilder -> uriBuilder.queryParam("skuCode",skuCodes).build())
-                        .retrieve()
-                        .bodyToMono(InventoryResponse[].class)
-                        .block();
-        boolean allPorductsInStock = Arrays.stream(inventoryResponses).allMatch(InventoryResponse::isInStock);
-        if(allPorductsInStock){
-            orderRepository.save(order);
-            return "Order Placed Successful";
-        } else{
-            throw new IllegalArgumentException("Product is not stock, please try again.");
-        }
+        Observation inventoryServiceObservation = Observation.createNotStarted("inventory-service-lookup",
+                this.observationRegistry);
+        inventoryServiceObservation.lowCardinalityKeyValue("call", "inventory-service");
+        return inventoryServiceObservation.observe(() -> {
+            InventoryResponse[] inventoryResponse = webClientBuilder.build().get()
+                    .uri("http://inventory-service/api/inventory",
+                            uriBuilder -> uriBuilder.queryParam("skuCode", skuCodes).build())
+                    .retrieve()
+                    .bodyToMono(InventoryResponse[].class)
+                    .block();
+
+            boolean allPorductsInStock = Arrays.stream(inventoryResponse).allMatch(InventoryResponse::isInStock);
+            if (allPorductsInStock) {
+                orderRepository.save(order);
+                return "Order Placed Successful";
+            } else {
+                throw new IllegalArgumentException("Product is not stock, please try again.");
+            }
+        });
     }
 
     private OrderLineItems mapToDto(OrderLineItemsDto orderLineItemsDto) {
